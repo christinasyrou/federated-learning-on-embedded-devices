@@ -1,0 +1,68 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+.env.local
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Hugging Face / dataset caches (flwr-datasets, etc.)
+.cache/
+huggingface/
+
+# PyTorch / ML artifacts (often large)
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Logs
+*.log
+logs/
+
+# IDE / editors
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Flower / local run outputs (add patterns if your runs create fixed paths)
+# flwr_outputs/
+
+# Optional: ignore generated datasets if you always regenerate with generate_dataset.py
+# datasets/
