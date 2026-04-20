@@ -1,4 +1,4 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""fedavg: Model, local data loading, and train/test for the Flower client."""
 
 import torch
 import torch.nn as nn

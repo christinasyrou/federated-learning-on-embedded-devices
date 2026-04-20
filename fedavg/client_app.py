@@ -1,12 +1,12 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""fedavg: Flower client app (local training aligned with FedAvg rounds)."""
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from embeddedexample.task import Net, load_data_from_disk
-from embeddedexample.task import test as test_fn
-from embeddedexample.task import train as train_fn
+from fedavg.task import Net, load_data_from_disk
+from fedavg.task import test as test_fn
+from fedavg.task import train as train_fn
 
 app = ClientApp()
 

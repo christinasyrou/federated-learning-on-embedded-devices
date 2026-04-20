@@ -1,12 +1,12 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""fedavg: Flower server app using the FedAvg aggregation strategy."""
 
 import torch
 from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from embeddedexample.run_artifacts import save_run_artifacts
-from embeddedexample.task import Net
+from fedavg.run_artifacts import save_run_artifacts
+from fedavg.task import Net
 
 # Create ServerApp
 app = ServerApp()
