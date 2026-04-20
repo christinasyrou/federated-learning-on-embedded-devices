@@ -1,0 +1,7 @@
+{
+  "num-server-rounds": 20,
+  "fraction-evaluate": 0.5,
+  "local-epochs": 3,
+  "learning-rate": 0.01,
+  "batch-size": 32
+}
