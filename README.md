@@ -1,9 +1,3 @@
----
-tags: [basic, vision, embedded]
-dataset: [Fashion-MNIST]
-framework: [torch]
----
-
 # Federated Learning with Embedded Devices using Flower
 
 ## What this project does
