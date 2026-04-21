@@ -1,11 +1,12 @@
-"""embeddedexample: A Flower / PyTorch app."""
+"""fedavg: Flower server app using the FedAvg aggregation strategy."""
 
 import torch
 from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from embeddedexample.task import Net
+from fedavg.run_artifacts import save_run_artifacts
+from fedavg.task import Net
 
 # Create ServerApp
 app = ServerApp()
@@ -33,7 +34,4 @@ def main(grid: Grid, context: Context) -> None:
         num_rounds=num_rounds,
     )
 
-    # Save final model to disk
-    print("\nSaving final model to disk...")
-    state_dict = result.arrays.to_torch_state_dict()
-    torch.save(state_dict, "final_model.pt")
+    save_run_artifacts(result, context, num_rounds)

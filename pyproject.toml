@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "embeddedexample"
+name = "fedavg"
 version = "1.0.0"
 description = "Federated AI with Embedded Devices using Flower"
 license = "Apache-2.0"
@@ -27,12 +27,12 @@ packages = ["."]
 publisher = "flwrlabs"
 
 [tool.flwr.app.components]
-serverapp = "embeddedexample.server_app:app"
-clientapp = "embeddedexample.client_app:app"
+serverapp = "fedavg.server_app:app"
+clientapp = "fedavg.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 20
 fraction-evaluate = 0.5
-local-epochs = 3
+local-epochs = 1
 learning-rate = 0.05
 batch-size = 32
