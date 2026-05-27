@@ -11,6 +11,12 @@ from flwr.app import Context
 from flwr.serverapp.strategy.result import Result
 
 
+def _dataset_slug(context: Context) -> str:
+    """Filesystem-safe dataset label from run config."""
+    raw = str(context.run_config.get("dataset-name", "unknown")).strip()
+    return raw.replace(" ", "_").replace("/", "-") or "unknown"
+
+
 def _rounds_with_labels(
     num_rounds: int, result: Result
 ) -> list[dict[str, int | str | dict[str, float | int | list] | None]]:
@@ -40,26 +46,39 @@ def save_run_artifacts(
     runs_root: Path | str = "flwr_runs",
     latest_model_path: Path | str = "final_model.pt",
 ) -> Path:
-    """Write timestamped ``final_model.pt``, ``metrics.json``, ``run_config.json``; also latest model path.
+    """Write ``{dataset}_{timestamp}/`` with model, metrics, and run config (all prefixed by dataset).
+
+    Also saves the latest model (``{dataset}_final_model.pt`` when default path is used).
 
     Returns the directory created for this run (under ``runs_root``).
     """
     print("\nSaving final model and metrics to disk...")
     state_dict = result.arrays.to_torch_state_dict()
+    dataset = _dataset_slug(context)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(runs_root) / stamp
+    run_id = f"{dataset}_{stamp}"
+    run_dir = Path(runs_root) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    torch.save(state_dict, run_dir / "final_model.pt")
+    model_name = f"{dataset}_final_model.pt"
+    metrics_name = f"{dataset}_metrics.json"
+    config_name = f"{dataset}_run_config.json"
+
+    torch.save(state_dict, run_dir / model_name)
     artifact = {
+        "dataset": dataset,
         "saved_at_utc": stamp,
+        "run_id": run_id,
         "num_rounds": num_rounds,
         "rounds": _rounds_with_labels(num_rounds, result),
     }
-    (run_dir / "metrics.json").write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+    (run_dir / metrics_name).write_text(json.dumps(artifact, indent=2), encoding="utf-8")
     run_cfg = {k: context.run_config[k] for k in context.run_config}
-    (run_dir / "run_config.json").write_text(json.dumps(run_cfg, indent=2), encoding="utf-8")
+    (run_dir / config_name).write_text(json.dumps(run_cfg, indent=2), encoding="utf-8")
 
-    torch.save(state_dict, latest_model_path)
+    latest = Path(latest_model_path)
+    if latest.name == "final_model.pt":
+        latest = latest.with_name(model_name)
+    torch.save(state_dict, latest)
     print(f"Artifacts: {run_dir.resolve()}")
     return run_dir
