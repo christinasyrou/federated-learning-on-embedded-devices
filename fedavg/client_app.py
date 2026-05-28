@@ -4,7 +4,7 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from fedavg.task import Net, load_data_from_disk
+from fedavg.task import create_model, load_data_from_disk
 from fedavg.task import test as test_fn
 from fedavg.task import train as train_fn
 
@@ -18,9 +18,10 @@ def train(msg: Message, context: Context):
     # Read from run config
     local_epochs = context.run_config["local-epochs"]
     learning_rate = context.run_config["learning-rate"]
+    architecture = context.run_config["model-architecture"]
 
     # Load the model and initialize it with the received weights
-    model = Net()
+    model = create_model(architecture)
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -39,6 +40,7 @@ def train(msg: Message, context: Context):
         local_epochs,
         learning_rate,
         device,
+        architecture,
     )
 
     # Construct and return reply Message
@@ -56,8 +58,10 @@ def train(msg: Message, context: Context):
 def evaluate(msg: Message, context: Context):
     """Evaluate the model on local data."""
 
+    architecture = context.run_config["model-architecture"]
+
     # Load the model and initialize it with the received weights
-    model = Net()
+    model = create_model(architecture)
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)

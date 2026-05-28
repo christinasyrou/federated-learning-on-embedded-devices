@@ -13,12 +13,15 @@ from torchvision.transforms import (
     ToTensor,
 )
 
+CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR10_STD = (0.2023, 0.1994, 0.2010)
 
-class Net(nn.Module):
-    """Model (simple CNN adapted from 'PyTorch: A 60 Minute Blitz')"""
+
+class BaselineNet(nn.Module):
+    """Small LeNet-style CNN (PyTorch '60 Minute Blitz' baseline)."""
 
     def __init__(self):
-        super(Net, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(3, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
@@ -35,10 +38,73 @@ class Net(nn.Module):
         return self.fc3(x)
 
 
+class AttnNet(nn.Module):
+    """CNN backbone with multi-head self-attention before classification."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.attention = nn.MultiheadAttention(
+            embed_dim=64, num_heads=4, batch_first=True
+        )
+        self.layer_norm = nn.LayerNorm(64)
+        self.fc1 = nn.Linear(64 * 8 * 8, 128)
+        self.dropout = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = F.relu(self.bn3(self.conv3(x)))
+
+        batch_size, channels, height, width = x.shape
+        x = x.flatten(2).transpose(1, 2)
+        attn_output, _ = self.attention(x, x, x)
+        x = self.layer_norm(x + attn_output)
+
+        x = x.transpose(1, 2).reshape(batch_size, channels, height, width)
+        x = x.reshape(batch_size, -1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        return self.fc2(x)
+
+
+Net = BaselineNet
+
+
+def create_model(architecture: str) -> nn.Module:
+    """Instantiate the model selected in run config."""
+    key = architecture.strip().lower()
+    if key in {"baseline", "lenet", "net"}:
+        return BaselineNet()
+    if key in {"attention", "attn", "attnnet"}:
+        return AttnNet()
+    raise ValueError(
+        f"Unknown model-architecture '{architecture}'. "
+        "Use 'baseline' or 'attention'."
+    )
+
+
+def create_optimizer(model: nn.Module, architecture: str, learning_rate: float):
+    """Pick optimizer matched to the architecture under comparison."""
+    key = architecture.strip().lower()
+    if key in {"attention", "attn", "attnnet"}:
+        return torch.optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=1e-4
+        )
+    return torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+
+
 def load_data_from_disk(path: str, batch_size: int):
-    """Load a dataset in Huggingface format from disk and creates dataloaders."""
+    """Load a dataset in Huggingface format from disk and create dataloaders."""
     partition_train_test = load_from_disk(path)
-    normalize = Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    normalize = Normalize(CIFAR10_MEAN, CIFAR10_STD)
     train_transforms = Compose(
         [
             RandomCrop(32, padding=4),
@@ -64,11 +130,11 @@ def load_data_from_disk(path: str, batch_size: int):
     return trainloader, testloader
 
 
-def train(net, trainloader, epochs, learning_rate, device):
+def train(net, trainloader, epochs, learning_rate, device, architecture: str):
     """Train the model on the training set."""
-    net.to(device)  # move model to GPU if available
+    net.to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9)
+    optimizer = create_optimizer(net, architecture, learning_rate)
     net.train()
     running_loss = 0.0
     for _ in range(epochs):
@@ -80,13 +146,12 @@ def train(net, trainloader, epochs, learning_rate, device):
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-    avg_trainloss = running_loss / len(trainloader)
-    return avg_trainloss
+    return running_loss / len(trainloader)
 
 
 def test(net, testloader, device):
     """Validate the model on the test set."""
-    net.to(device)  # move model to GPU if available
+    net.to(device)
     net.eval()
     criterion = torch.nn.CrossEntropyLoss()
     correct, loss = 0, 0.0
@@ -97,6 +162,4 @@ def test(net, testloader, device):
             outputs = net(images)
             loss += criterion(outputs, labels).item()
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-    accuracy = correct / len(testloader.dataset)
-    loss = loss / len(testloader)
-    return loss, accuracy
+    return loss / len(testloader), correct / len(testloader.dataset)

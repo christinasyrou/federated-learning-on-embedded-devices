@@ -1,0 +1,128 @@
+{
+  "dataset": "cifar10",
+  "saved_at_utc": "20260528_130730",
+  "run_id": "cifar10_20260528_130730",
+  "num_rounds": 10,
+  "rounds": [
+    {
+      "round": "1/10",
+      "round_index": 1,
+      "train_metrics": {
+        "train_loss": 9.549516157627107
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.583992731039691,
+        "eval_acc": 0.4185
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "2/10",
+      "round_index": 2,
+      "train_metrics": {
+        "train_loss": 7.741832599782944
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.366816762526324,
+        "eval_acc": 0.5071
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "3/10",
+      "round_index": 3,
+      "train_metrics": {
+        "train_loss": 6.999290124559403
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.2627757996510547,
+        "eval_acc": 0.5398000000000001
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "4/10",
+      "round_index": 4,
+      "train_metrics": {
+        "train_loss": 6.524745751810074
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.1804906849268895,
+        "eval_acc": 0.5779000000000001
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "5/10",
+      "round_index": 5,
+      "train_metrics": {
+        "train_loss": 6.212956781435013
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.1486587640206527,
+        "eval_acc": 0.5916
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "6/10",
+      "round_index": 6,
+      "train_metrics": {
+        "train_loss": 5.9591486258983615
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.1050619693698396,
+        "eval_acc": 0.6064
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "7/10",
+      "round_index": 7,
+      "train_metrics": {
+        "train_loss": 5.754061632585525
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.0609471900447918,
+        "eval_acc": 0.6248
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "8/10",
+      "round_index": 8,
+      "train_metrics": {
+        "train_loss": 5.606367251777649
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.0428767828804673,
+        "eval_acc": 0.6359999999999999
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "9/10",
+      "round_index": 9,
+      "train_metrics": {
+        "train_loss": 5.438706821346283
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 1.0291653696898442,
+        "eval_acc": 0.6374
+      },
+      "evaluate_metrics_serverapp": null
+    },
+    {
+      "round": "10/10",
+      "round_index": 10,
+      "train_metrics": {
+        "train_loss": 5.304707575678826
+      },
+      "evaluate_metrics_clientapp": {
+        "eval_loss": 0.9795520523930811,
+        "eval_acc": 0.6563000000000001
+      },
+      "evaluate_metrics_serverapp": null
+    }
+  ]
+}

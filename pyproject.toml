@@ -32,8 +32,9 @@ clientapp = "fedavg.client_app:app"
 
 [tool.flwr.app.config]
 dataset-name = "cifar10"
-num-server-rounds = 30
+model-architecture = "attention"
+num-server-rounds = 10
 fraction-evaluate = 0.5
 local-epochs = 5
-learning-rate = 0.01
+learning-rate = 0.001
 batch-size = 32
