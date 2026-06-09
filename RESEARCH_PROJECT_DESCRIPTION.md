@@ -12,12 +12,14 @@ This document summarizes the implementation for reproducibility and for drafting
 
 **Framework.** [Flower](https://flower.ai/) (FL) with an **embedded federation** deployment model: a **SuperLink** coordinates the run; **SuperNodes** (e.g., edge devices) host the **ClientApp**; the **ServerApp** runs FedAvg for a fixed number of communication rounds.
 
-**Comparative research question.** The codebase supports two interchangeable classifiers under the **same federated protocol, data splits, and preprocessing**. The intended experiment is a **controlled comparison**:
+**Comparative research question.** The codebase supports four interchangeable classifiers under the **same federated protocol, data splits, and preprocessing**. The intended experiment is a **controlled comparison**:
 
 - **Baseline:** lightweight LeNet-style CNN (`BaselineNet`) — minimal capacity, no attention.
-- **Treatment:** attention-augmented CNN (`AttnNet`) — deeper backbone, batch normalization, multi-head self-attention, dropout.
+- **Attention CNN:** (`AttnNet`) — deeper backbone, batch normalization, multi-head self-attention, dropout.
+- **Residual CNN (ablation):** (`ResNet`) — same residual backbone as `ResAttentionNet` but **without** self-attention; isolates the effect of attention within the residual stack.
+- **Residual attention CNN:** (`ResAttentionNet`) — two residual blocks, shortcut paths, attention on a \(16\times16\) feature grid.
 
-Switch models via run config key **`model-architecture`**: `"baseline"` or `"attention"` (see §7). All other FL settings remain identical so differences in accuracy, convergence, and communication cost can be attributed primarily to architecture.
+Switch models via run config key **`model-architecture`**: `"baseline"`, `"attention"`, `"resnet"`, or `"res-attention"` (see §7). All other FL settings remain identical so differences in accuracy, convergence, and communication cost can be attributed primarily to architecture.
 
 ---
 
@@ -42,25 +44,26 @@ Thus each client trains and evaluates on **its own** train/test split derived fr
 
 ## 3. Model architectures
 
-Both models are defined in `fedavg/task.py`. Input shape is **\(B \times 3 \times 32 \times 32\)**; output is **\(B \times 10\)** logits (no softmax in `forward`; `CrossEntropyLoss` used in training).
+All models are defined in `fedavg/task.py`. Input shape is **\(B \times 3 \times 32 \times 32\)**; output is **\(B \times 10\)** logits (no softmax in `forward`; `CrossEntropyLoss` used in training).
 
-Factory function: `create_model(architecture)` with `architecture ∈ {"baseline", "attention"}`.
+Factory function: `create_model(architecture)` with `architecture ∈ {"baseline", "attention", "resnet", "res-attention"}`.
 
 ### 3.1 Architecture comparison (summary)
 
-| Property | `BaselineNet` | `AttnNet` |
-|----------|---------------|-----------|
-| Role in study | Control (simple CNN) | Treatment (CNN + attention) |
-| Conv blocks | 2 (\(5\times5\), no padding) | 3 (\(3\times3\), padding 1) |
-| Normalization | None | `BatchNorm2d` after each conv |
-| Pooling | After conv1 and conv2 | After conv1 and conv2 only |
-| Attention | None | 4-head self-attention on \(8\times8\) grid |
-| Regularization | None | Dropout (0.3) before classifier |
-| Classifier | 3 FC layers (400→120→84→10) | 2 FC layers (4096→128→10) |
-| Local optimizer | SGD, momentum 0.9 | AdamW, weight decay \(10^{-4}\) |
-| **Parameters** | **62,006** | **566,282** |
+| Property | `BaselineNet` | `AttnNet` | `ResNet` | `ResAttentionNet` |
+|----------|---------------|-----------|----------|-------------------|
+| Role in study | Control (simple CNN) | CNN + attention | Residual CNN (no attention) | Residual CNN + attention |
+| Conv blocks | 2 (\(5\times5\), no padding) | 3 (\(3\times3\), padding 1) | 2 residual blocks + init conv | 2 residual blocks + init conv |
+| Normalization | None | `BatchNorm2d` after each conv | `BatchNorm2d` after each conv | `BatchNorm2d` after each conv |
+| Residual shortcuts | None | None | Identity + \(1\times1\) channel match | Identity + \(1\times1\) channel match |
+| Pooling | After conv1 and conv2 | After conv1 and conv2 only | Once (32→16 spatial) | Once (32→16 spatial) |
+| Attention | None | 4-head on \(8\times8\) grid (64 tokens) | None | 4-head on \(16\times16\) grid (256 tokens) |
+| Regularization | None | Dropout (0.3) | Dropout (0.4) | Dropout (0.4) |
+| Classifier | 3 FC (400→120→84→10) | 2 FC (4096→128→10) | 2 FC (16384→256→10) | 2 FC (16384→256→10) |
+| Local optimizer | AdamW, weight decay \(10^{-4}\) | AdamW, weight decay \(10^{-4}\) | AdamW, weight decay \(10^{-4}\) | AdamW, weight decay \(10^{-4}\) |
+| **Parameters** | **62,006** | **566,282** | **4,274,506** | **4,291,274** |
 
-The attention model is ~**9.1×** larger by parameter count. For the paper, report both **parameter count** and **per-round compute** (attention adds \(O(n^2)\) cost over \(n = 64\) spatial tokens per forward pass).
+`ResNet` and `ResAttentionNet` share the same convolutional backbone and classifier head; the attention block adds **16,768** parameters (~0.4% of the residual stack). `ResAttentionNet` is the largest variant (~**69×** baseline parameters). Attention cost scales as \(O(n^2)\) in token count \(n\); residual attention uses \(n = 256\) tokens vs \(n = 64\) for `AttnNet`, so expect higher memory and latency on edge devices when attention is enabled.
 
 ---
 
@@ -142,18 +145,67 @@ Attention lets each spatial location aggregate context from all \(8 \times 8 = 6
 
 ---
 
-### 3.4 Architectural differences (for paper discussion)
+### 3.4 Residual CNN without attention (`ResNet`)
 
-| Mechanism | Baseline | Attention model | Expected effect |
-|-----------|----------|-----------------|-----------------|
-| Receptive field before classifier | \(5\times5\) final map | \(8\times8\) map + all-to-all attention | Richer spatial context |
-| Feature depth | 6 → 16 channels | 16 → 32 → 64 channels | Higher representational capacity |
-| Training stability | No normalization | BatchNorm per conv block | Faster, stabler local updates |
-| Overfitting control | None | Dropout on classifier | May help generalization under few local epochs |
-| Optimization | SGD + momentum | AdamW + weight decay | Better suited to attention + BatchNorm |
-| Edge cost | Very low FLOPs / memory | ~9× parameters; attention quadratic in 64 tokens | Higher latency per local epoch on Pis |
+Config key: **`resnet`** (alias: `resnetnet`).
 
-**Fair comparison note:** Optimizers differ by design (SGD for classical CNN vs AdamW for attention). For a stricter ablation, a follow-up experiment could train both with the same optimizer; the current setup reflects common practice per architecture family.
+An **ablation baseline** for `ResAttentionNet`: identical residual convolutional backbone and classifier head, but **no** multi-head self-attention or `LayerNorm`. This isolates whether accuracy gains of the residual attention stack come from the residual architecture itself or from the attention block.
+
+#### 3.4.1 Backbone
+
+Same structure as §3.5.1 (`ResAttentionNet` backbone): init conv → residual block 1 (identity skip) → pool → residual block 2 (\(1\times1\) shortcut). Output tensor before classification: **\(B \times 64 \times 16 \times 16\)**.
+
+#### 3.4.2 Classification head
+
+No tokenization or attention. The feature map is flattened directly:
+
+1. Flatten → `Linear(16384 → 256)` → ReLU → `Dropout(0.4)` → `Linear(256 → 10)`.
+
+**Parameter count (exact): 4,274,506**
+
+**Ablation note:** Compared with `ResAttentionNet` (4,291,274 parameters), removing attention saves only the MHSA + `LayerNorm` weights (**16,768** parameters), so any accuracy difference at matched FL settings is dominated by attention compute and representational capacity, not model size.
+
+---
+
+### 3.5 Residual attention CNN (`ResAttentionNet`)
+
+Config key: **`res-attention`** (aliases: `res_attention`, `resattention`, `resattentionnet`).
+
+A **residual convolutional backbone** preserves spatial detail via shortcut connections; **multi-head self-attention** runs on a \(16 \times 16\) grid (\(256\) tokens) before classification.
+
+#### 3.5.1 Backbone
+
+| Stage | Module | Output spatial size | Channels |
+|-------|--------|---------------------|----------|
+| Init | `Conv2d` + `BatchNorm2d` + ReLU | \(32 \times 32\) | 32 |
+| Res block 1 | two \(3\times3\) convs + identity skip | \(32 \times 32\) | 32 |
+| Pool | `MaxPool2d` | \(16 \times 16\) | 32 |
+| Res block 2 | two \(3\times3\) convs + \(1\times1\) shortcut | \(16 \times 16\) | 64 |
+
+#### 3.5.2 Attention and head
+
+1. Tokenize \(B \times 64 \times 16 \times 16\) → **\(B \times 256 \times 64\)**.
+2. `MultiheadAttention(embed_dim=64, num_heads=4)` + residual `LayerNorm`.
+3. Flatten → `Linear(16384 → 256)` → ReLU → `Dropout(0.4)` → `Linear(256 → 10)`.
+
+**Parameter count (exact): 4,291,274**
+
+**Edge note:** This model is substantially heavier than `AttnNet`; prefer Pi 5 (or fewer clients / smaller `batch-size`) for stable federated runs.
+
+---
+
+### 3.6 Architectural differences (for paper discussion)
+
+| Mechanism | Baseline | Attention model | ResNet (no attn.) | Res-attention | Expected effect |
+|-----------|----------|-----------------|-------------------|---------------|-----------------|
+| Receptive field before classifier | \(5\times5\) final map | \(8\times8\) map + all-to-all attention | \(16\times16\) map, local conv only | \(16\times16\) map + all-to-all attention | Residual + attention = richest context |
+| Feature depth | 6 → 16 channels | 16 → 32 → 64 channels | 32 → 64 channels | 32 → 64 channels | Higher capacity in residual variants |
+| Training stability | No normalization | BatchNorm per conv block | BatchNorm + residual skips | BatchNorm + residual skips | Residual paths ease optimization |
+| Overfitting control | None | Dropout on classifier | Dropout (0.4) | Dropout (0.4) | Stronger regularization on large heads |
+| Optimization | AdamW + weight decay | AdamW + weight decay | AdamW + weight decay | AdamW + weight decay | Same optimizer across all four models |
+| Edge cost | Very low FLOPs / memory | ~9× baseline params | ~69× baseline; no attention FLOPs | ~69× baseline + 256-token attention | Attention adds latency on top of residual cost |
+
+**Fair comparison note:** All four architectures use the same local optimizer (**AdamW**, lr from config, weight decay \(10^{-4}\)) so accuracy differences reflect model design, not optimization choice. The **`ResNet` vs `ResAttentionNet`** pair is the cleanest ablation for isolating attention within a matched residual backbone.
 
 ---
 
@@ -188,12 +240,14 @@ No random crop or flip at evaluation time.
 
 - **`CrossEntropyLoss`** on raw logits (both architectures).
 
-### 5.2 Optimizer (architecture-dependent)
+### 5.2 Optimizer (shared across architectures)
 
 | Architecture | Optimizer | Notes |
 |--------------|-----------|-------|
-| `baseline` | **SGD**, lr from config, **momentum = 0.9** | Matches classic LeNet training |
-| `attention` | **AdamW**, lr from config, **weight_decay = 1e-4** | Standard for attention + BatchNorm stacks |
+| `baseline` | **AdamW**, lr from config, **weight_decay = 1e-4** | Same as attention/residual variants |
+| `attention` | **AdamW**, lr from config, **weight_decay = 1e-4** | — |
+| `resnet` | **AdamW**, lr from config, **weight_decay = 1e-4** | Ablation pair with `res-attention` |
+| `res-attention` | **AdamW**, lr from config, **weight_decay = 1e-4** | — |
 
 Selected automatically in `create_optimizer()` inside `train()`.
 
@@ -242,14 +296,14 @@ Declared in `pyproject.toml` → `[tool.flwr.app.config]`:
 | Key | Role |
 |-----|------|
 | `dataset-name` | Artifact label (e.g., `cifar10`). |
-| **`model-architecture`** | **`baseline`** or **`attention`** — selects `BaselineNet` vs `AttnNet`. |
+| **`model-architecture`** | **`baseline`**, **`attention`**, **`resnet`**, or **`res-attention`** — selects `BaselineNet`, `AttnNet`, `ResNet`, or `ResAttentionNet`. |
 | `num-server-rounds` | Federated communication rounds \(T\). |
 | `fraction-evaluate` | Client fraction for evaluation each round. |
 | `local-epochs` | Local epochs \(E\) per round. |
 | `learning-rate` | Base learning rate (both optimizers). |
 | `batch-size` | Mini-batch size for train and test loaders. |
 
-**Current defaults:** `model-architecture = attention`, `num-server-rounds = 30`, `local-epochs = 5`, `learning-rate = 0.01`, `batch-size = 32`, `fraction-evaluate = 0.5`.
+**Current defaults:** `model-architecture = resnet`, `num-server-rounds = 10`, `local-epochs = 5`, `learning-rate = 0.001`, `batch-size = 32`, `fraction-evaluate = 0.5`.
 
 Per-device **`dataset-path`** is set in Flower node config (not in `pyproject.toml`).
 
@@ -257,46 +311,53 @@ Per-device **`dataset-path`** is set in Flower node config (not in `pyproject.to
 
 1. **Baseline run:** set `model-architecture = "baseline"`, run `flwr run . embedded-federation --stream`.
 2. **Attention run:** set `model-architecture = "attention"`, repeat with the same `num-server-rounds`, `local-epochs`, `learning-rate`, and `batch-size`.
-3. Compare `{dataset}_metrics.json` files under `flwr_runs/` (final `eval_acc`, convergence speed, train/eval loss curves).
+3. **Residual ablation run:** set `model-architecture = "resnet"`, repeat with the same hyperparameters.
+4. **Residual attention run:** set `model-architecture = "res-attention"`, repeat with the same hyperparameters.
+5. Compare `{dataset}_metrics.json` files under `flwr_runs/` (final `eval_acc`, convergence speed, train/eval loss curves). Pay special attention to **`resnet` vs `res-attention`** for the attention ablation.
 
-Optionally set `dataset-name = "cifar10_baseline"` vs `"cifar10_attention"` to distinguish artifact folders in the paper.
+Optionally set distinct `dataset-name` values (e.g. `cifar10_baseline`, `cifar10_attention`, `cifar10_resnet`, `cifar10_res_attention`) to separate artifact folders.
 
-### 7.2 CIFAR-10 comparison results (2026-05-28)
+### 7.2 CIFAR-10 comparison results (2026-05-28 / 2026-05-30)
 
-Two federated runs were completed under **matched FedAvg settings**; only `model-architecture` differed. Metrics below are **client-averaged** evaluation values from Flower (`evaluate_metrics_clientapp` in each round).
+Four federated runs were completed under **matched FedAvg settings**; only `model-architecture` differed. All four use **AdamW** (weight decay \(10^{-4}\)). Metrics below are **client-averaged** evaluation values from Flower (`evaluate_metrics_clientapp` in each round).
 
-| Setting | Baseline (`BaselineNet`) | Attention (`AttnNet`) |
-|---------|--------------------------|------------------------|
-| Run folder | `flwr_runs/cifar10_20260528_130730/` | `flwr_runs/cifar10_20260528_144603/` |
-| `model-architecture` | `baseline` | `attention` |
-| `num-server-rounds` | 10 | 10 |
-| `local-epochs` | 5 | 5 |
-| `learning-rate` | 0.001 | 0.001 |
-| `batch-size` | 32 | 32 |
-| `fraction-evaluate` | 0.5 | 0.5 |
-| Local optimizer | SGD (momentum 0.9) | AdamW (weight decay \(10^{-4}\)) |
+| Setting | Baseline (`BaselineNet`) | Attention (`AttnNet`) | Residual (`ResNet`) | Residual attention (`ResAttentionNet`) |
+|---------|--------------------------|------------------------|---------------------|----------------------------------------|
+| Run folder | `flwr_runs/cifar10_20260529_114124/` | `flwr_runs/cifar10_20260528_144603/` | `flwr_runs/cifar10_20260530_210916/` | `flwr_runs/cifar10_20260528_232524/` |
+| `model-architecture` | `baseline` | `attention` | `resnet` | `res-attention` |
+| `num-server-rounds` | 10 | 10 | 10 | 10 |
+| `local-epochs` | 5 | 5 | 5 | 5 |
+| `learning-rate` | 0.001 | 0.001 | 0.001 | 0.001 |
+| `batch-size` | 32 | 32 | 32 | 32 |
+| `fraction-evaluate` | 0.5 | 0.5 | 0.5 | 0.5 |
+| Parameters (approx.) | 62k | 566k | 4.27M | 4.29M |
+| Local optimizer | AdamW (weight decay \(10^{-4}\)) | AdamW (weight decay \(10^{-4}\)) | AdamW (weight decay \(10^{-4}\)) | AdamW (weight decay \(10^{-4}\)) |
 
 **Round-by-round evaluation accuracy** (aggregated across sampled clients):
 
-| Round | Baseline `eval_acc` | Attention `eval_acc` |
-|-------|---------------------|----------------------|
-| 1 | 41.85% | 58.87% |
-| 5 | 59.16% | 77.68% |
-| 10 | **65.63%** | **82.08%** |
+| Round | Baseline `eval_acc` | Attention `eval_acc` | ResNet `eval_acc` | Res-attention `eval_acc` |
+|-------|---------------------|----------------------|-------------------|--------------------------|
+| 1 | 35.17% | 58.87% | 43.54% | 39.06% |
+| 5 | 64.74% | 77.68% | 80.90% | **83.91%** |
+| 10 | 67.98% | 82.08% | 84.51% | **86.36%** |
 
 **Final round (10/10):**
 
-| Metric | Baseline | Attention | Δ (attention − baseline) |
-|--------|----------|-----------|--------------------------|
-| `eval_acc` | 0.6563 | 0.8208 | **+16.45 pp** |
-| `eval_loss` | 0.9796 | 0.5262 | **−0.4534** (lower is better) |
-| `train_loss` | 5.3047 | 2.9413 | — |
+| Metric | Baseline | Attention | ResNet | Res-attention | Δ (res-attn − resnet) | Δ (res-attn − baseline) |
+|--------|----------|-----------|--------|---------------|-------------------------|-------------------------|
+| `eval_acc` | 0.6798 | 0.8208 | 0.8451 | **0.8636** | **+1.85 pp** | **+18.38 pp** |
+| `eval_loss` | 0.9137 | 0.5262 | 0.4682 | **0.4176** | **−0.0506** | **−0.4961** |
+| `train_loss` | 4.9107 | 2.9413 | 2.5728 | 2.1835 | — | — |
 
-**Summary.** On CIFAR-10 with the configuration above, the attention-augmented CNN **outperformed the baseline CNN** at every logged evaluation round. By round 10, attention reached **82.08%** client-averaged accuracy versus **65.63%** for the baseline—a gain of **16.45 percentage points** with roughly half the evaluation loss. Attention also converged faster (e.g., round 1: 58.87% vs 41.85%).
+**Summary.** Under identical federated hyperparameters and **AdamW** local optimization, **`ResAttentionNet` achieved the highest client-averaged test accuracy** (**86.36%** at round 10), followed by **`ResNet` (84.51%)**, **`AttnNet` (82.08%)**, and **`BaselineNet` (67.98%)**. The residual stack alone (`ResNet`) outperformed the non-residual attention model by **+2.43 pp** at round 10 despite similar nominal capacity in the classifier head—suggesting residual shortcuts and the \(16\times16\) feature grid contribute substantially before attention is applied.
 
-**Interpretation.** These runs support the project hypothesis that adding a lightweight self-attention block improves federated classification on CIFAR-10 under the same communication schedule. Because optimizers differ (SGD vs AdamW), part of the gap may come from optimization choice as well as capacity/architecture; see §11.
+**Attention ablation (`ResNet` vs `ResAttentionNet`).** With matched backbone and head (parameter difference **< 0.4%**), adding 4-head self-attention over 256 tokens improved final accuracy by **+1.85 percentage points** (84.51% → 86.36%) and reduced evaluation loss by **0.0506**. Attention therefore provides a measurable but modest gain on top of the residual CNN under FedAvg, at the cost of quadratic attention FLOPs on edge hardware.
 
-**Reproduce.** Artifacts: `cifar10_run_config.json`, `cifar10_metrics.json`, and `cifar10_final_model.pt` in each run directory listed above.
+**Convergence note.** `ResAttentionNet` started below `ResNet` at round 1 (39.06% vs 43.54%) but surpassed both non-residual models by round 5 and maintained the lead through round 10. `ResNet` tracked closely behind `ResAttentionNet` from round 5 onward (80.90% vs 83.91% at round 5), consistent with a shared residual backbone converging similarly until the attention block differentiates peak performance.
+
+**Interpretation.** All four runs support the hypothesis that deeper, normalized backbones improve federated CIFAR-10 classification relative to the LeNet-style baseline. The **`ResNet` ablation** separates residual capacity from attention: most of the gain over `AttnNet` comes from the residual architecture, while attention adds a further **~1.9 pp** at matched parameter count.
+
+**Reproduce.** Artifacts in each run directory: `cifar10_run_config.json`, `cifar10_metrics.json`, and `cifar10_final_model.pt` for `cifar10_20260529_114124`, `cifar10_20260528_144603`, `cifar10_20260530_210916`, and `cifar10_20260528_232524`.
 
 ---
 
@@ -323,15 +384,14 @@ Record the exact `flwr` version used in experiments (`pip show flwr`).
 
 ## 10. Suggested paper phrasing (methods snippet)
 
-> We study federated image classification on CIFAR-10 with \(P=5\) IID clients. Each client holds an 80/20 train/test split (seed 42) of its partition. We compare two global models under identical FedAvg settings: (i) a LeNet-style baseline with 62k parameters and two convolutional layers, and (ii) an attention-augmented CNN with 566k parameters, batch normalization, a 4-head self-attention block over an \(8\times8\) feature grid, and dropout. Both models receive the same augmentations (random crop with padding 4, horizontal flip) and CIFAR-10 normalization. The baseline is trained locally with SGD (momentum 0.9); the attention model with AdamW (weight decay \(10^{-4}\)). The server aggregates for \(T\) rounds with \(E\) local epochs per round. We report client-averaged evaluation accuracy and loss per communication round.
+> We study federated image classification on CIFAR-10 with \(P=5\) IID clients. Each client holds an 80/20 train/test split (seed 42) of its partition. We compare four global models under identical FedAvg settings: (i) a LeNet-style baseline (62k parameters), (ii) an attention-augmented CNN (566k parameters; 4-head self-attention over an \(8\times8\) grid), (iii) a residual CNN ablation without attention (4.27M parameters; same backbone as (iv)), and (iv) a residual attention CNN (4.29M parameters; residual blocks plus 4-head self-attention over a \(16\times16\) grid). All models share the same augmentations (random crop with padding 4, horizontal flip), CIFAR-10 normalization, and local **AdamW** optimizer (weight decay \(10^{-4}\)). The server aggregates for \(T=10\) rounds with \(E=5\) local epochs per round. We report client-averaged evaluation accuracy and loss per communication round. At the final round, accuracies were **67.98%** (baseline), **82.08%** (attention), **84.51%** (residual, no attention), and **86.36%** (residual attention). Adding attention to the matched residual backbone improved accuracy by **1.85 pp** (84.51% → 86.36%).
 
 ---
 
 ## 11. Known limitations
 
-- **Optimizer confound:** Baseline uses SGD; attention uses AdamW. Interpret gains as architecture **plus** optimizer choice unless you add a controlled optimizer ablation.
 - **No centralized test set** in code; metrics are client-local test splits aggregated by Flower.
-- **Attention cost:** Higher memory and compute on Raspberry Pi class devices; report wall-clock per round in the paper.
+- **Attention cost:** `ResAttentionNet` and `ResNet` are the largest models (~69× baseline parameters); only `ResAttentionNet` pays the cost of 256-token self-attention. Report wall-clock and memory per round on Raspberry Pi class devices in the paper, especially for the `resnet` vs `res-attention` ablation pair.
 - **Vanilla FedAvg** only (no DP, robust aggregation, or personalization).
 
 ---
@@ -340,7 +400,7 @@ Record the exact `flwr` version used in experiments (`pip show flwr`).
 
 | Path | Purpose |
 |------|---------|
-| `fedavg/task.py` | `BaselineNet`, `AttnNet`, `create_model()`, dataloaders, train/test. |
+| `fedavg/task.py` | `BaselineNet`, `AttnNet`, `ResNet`, `ResAttentionNet`, `create_model()`, dataloaders, train/test. |
 | `fedavg/client_app.py` | Flower ClientApp handlers. |
 | `fedavg/server_app.py` | Flower ServerApp + FedAvg. |
 | `fedavg/run_artifacts.py` | Persist model, metrics, config. |

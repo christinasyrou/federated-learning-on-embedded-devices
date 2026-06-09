@@ -32,7 +32,7 @@ clientapp = "fedavg.client_app:app"
 
 [tool.flwr.app.config]
 dataset-name = "cifar10"
-model-architecture = "attention"
+model-architecture = "resnet"
 num-server-rounds = 10
 fraction-evaluate = 0.5
 local-epochs = 5

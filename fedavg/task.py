@@ -75,7 +75,119 @@ class AttnNet(nn.Module):
         return self.fc2(x)
 
 
+class ResAttentionNet(nn.Module):
+    """Residual CNN backbone with multi-head self-attention before classification."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv_init = nn.Conv2d(3, 32, kernel_size=3, padding=1)
+        self.bn_init = nn.BatchNorm2d(32)
+
+        self.conv1a = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1a = nn.BatchNorm2d(32)
+        self.conv1b = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1b = nn.BatchNorm2d(32)
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.conv2a = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2a = nn.BatchNorm2d(64)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn2b = nn.BatchNorm2d(64)
+        self.shortcutx = nn.Conv2d(32, 64, kernel_size=1)
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=64, num_heads=4, batch_first=True
+        )
+        self.layer_norm = nn.LayerNorm(64)
+
+        self.fc1 = nn.Linear(64 * 16 * 16, 256)
+        self.dropout = nn.Dropout(0.4)
+        self.fc2 = nn.Linear(256, 10)
+
+    def forward(self, x):
+        x = F.relu(self.bn_init(self.conv_init(x)))
+
+        residual = x
+        x = F.relu(self.bn1a(self.conv1a(x)))
+        x = self.bn1b(self.conv1b(x))
+        x = F.relu(x + residual)
+
+        x = self.pool(x)
+
+        residual = self.shortcutx(x)
+        x = F.relu(self.bn2a(self.conv2a(x)))
+        x = self.bn2b(self.conv2b(x))
+        x = F.relu(x + residual)
+
+        batch_size, channels, height, width = x.shape
+        x = x.flatten(2).transpose(1, 2)
+        attn_output, _ = self.attention(x, x, x)
+        x = self.layer_norm(x + attn_output)
+
+        x = x.transpose(1, 2).reshape(batch_size, channels, height, width)
+        x = x.reshape(batch_size, -1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        return self.fc2(x)
+
+
+class ResNet(nn.Module):
+    """Residual CNN backbone WITHOUT self-attention for a clean ablation baseline."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv_init = nn.Conv2d(3, 32, kernel_size=3, padding=1)
+        self.bn_init = nn.BatchNorm2d(32)
+
+        self.conv1a = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1a = nn.BatchNorm2d(32)
+        self.conv1b = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1b = nn.BatchNorm2d(32)
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.conv2a = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2a = nn.BatchNorm2d(64)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn2b = nn.BatchNorm2d(64)
+        self.shortcutx = nn.Conv2d(32, 64, kernel_size=1)
+
+        self.fc1 = nn.Linear(64 * 16 * 16, 256)
+        self.dropout = nn.Dropout(0.4)
+        self.fc2 = nn.Linear(256, 10)
+
+    def forward(self, x):
+        x = F.relu(self.bn_init(self.conv_init(x)))
+
+        residual = x
+        x = F.relu(self.bn1a(self.conv1a(x)))
+        x = self.bn1b(self.conv1b(x))
+        x = F.relu(x + residual)
+
+        x = self.pool(x)
+
+        residual = self.shortcutx(x)
+        x = F.relu(self.bn2a(self.conv2a(x)))
+        x = self.bn2b(self.conv2b(x))
+        x = F.relu(x + residual)
+
+        x = x.reshape(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        return self.fc2(x)
+
+
 Net = BaselineNet
+
+_ATTENTION_ARCHITECTURES = {"attention", "attn", "attnnet"}
+_RESNET_ARCHITECTURES = {"resnet", "resnetnet"}
+_RES_ATTENTION_ARCHITECTURES = {
+    "res-attention",
+    "res_attention",
+    "resattention",
+    "resattentionnet",
+}
 
 
 def create_model(architecture: str) -> nn.Module:
@@ -83,22 +195,24 @@ def create_model(architecture: str) -> nn.Module:
     key = architecture.strip().lower()
     if key in {"baseline", "lenet", "net"}:
         return BaselineNet()
-    if key in {"attention", "attn", "attnnet"}:
+    if key in _ATTENTION_ARCHITECTURES:
         return AttnNet()
+    if key in _RESNET_ARCHITECTURES:
+        return ResNet()
+    if key in _RES_ATTENTION_ARCHITECTURES:
+        return ResAttentionNet()
     raise ValueError(
         f"Unknown model-architecture '{architecture}'. "
-        "Use 'baseline' or 'attention'."
+        "Use 'baseline', 'attention', 'resnet', or 'res-attention'."
     )
 
 
 def create_optimizer(model: nn.Module, architecture: str, learning_rate: float):
-    """Pick optimizer matched to the architecture under comparison."""
-    key = architecture.strip().lower()
-    if key in {"attention", "attn", "attnnet"}:
-        return torch.optim.AdamW(
-            model.parameters(), lr=learning_rate, weight_decay=1e-4
-        )
-    return torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    """AdamW for all architectures so FL comparisons isolate model capacity, not optimizer."""
+    del architecture  # same optimizer for all architectures
+    return torch.optim.AdamW(
+        model.parameters(), lr=learning_rate, weight_decay=1e-4
+    )
 
 
 def load_data_from_disk(path: str, batch_size: int):

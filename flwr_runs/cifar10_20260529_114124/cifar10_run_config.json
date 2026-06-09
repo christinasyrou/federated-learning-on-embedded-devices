@@ -1,0 +1,9 @@
+{
+  "dataset-name": "cifar10",
+  "model-architecture": "baseline",
+  "num-server-rounds": 10,
+  "fraction-evaluate": 0.5,
+  "local-epochs": 5,
+  "learning-rate": 0.001,
+  "batch-size": 32
+}
