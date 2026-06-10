@@ -1,0 +1,58 @@
+{
+  "run_id": "cifar10_20260529_114124",
+  "run_dir": "flwr_runs/cifar10_20260529_114124",
+  "dataset": "cifar10",
+  "model_architecture": "baseline",
+  "evaluated_at_utc": "20260609_170743",
+  "partitions_root": "datasets/5-nodes-partition",
+  "batch_size": 32,
+  "device": "cpu",
+  "aggregate": {
+    "num_examples": 10000,
+    "eval_loss": 0.8469289395544263,
+    "eval_acc": 0.7046,
+    "eval_f1": 0.7049121948126716
+  },
+  "per_client": [
+    {
+      "partition": "cifar10_part_1",
+      "dataset_path": "datasets/5-nodes-partition/cifar10_part_1",
+      "num_examples": 2000,
+      "eval_loss": 0.8617380568905483,
+      "eval_acc": 0.692,
+      "eval_f1": 0.6881646353660034
+    },
+    {
+      "partition": "cifar10_part_2",
+      "dataset_path": "datasets/5-nodes-partition/cifar10_part_2",
+      "num_examples": 2000,
+      "eval_loss": 0.8347025385924748,
+      "eval_acc": 0.703,
+      "eval_f1": 0.7038949156025784
+    },
+    {
+      "partition": "cifar10_part_3",
+      "dataset_path": "datasets/5-nodes-partition/cifar10_part_3",
+      "num_examples": 2000,
+      "eval_loss": 0.8351365706277272,
+      "eval_acc": 0.7165,
+      "eval_f1": 0.716417208996968
+    },
+    {
+      "partition": "cifar10_part_4",
+      "dataset_path": "datasets/5-nodes-partition/cifar10_part_4",
+      "num_examples": 2000,
+      "eval_loss": 0.864350213890984,
+      "eval_acc": 0.706,
+      "eval_f1": 0.7090462587091364
+    },
+    {
+      "partition": "cifar10_part_5",
+      "dataset_path": "datasets/5-nodes-partition/cifar10_part_5",
+      "num_examples": 2000,
+      "eval_loss": 0.8387173177703978,
+      "eval_acc": 0.7055,
+      "eval_f1": 0.7070379553886721
+    }
+  ]
+}

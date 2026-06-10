@@ -74,7 +74,7 @@ def evaluate(msg: Message, context: Context):
     _, valloader = load_data_from_disk(dataset_path, batch_size)
 
     # Call the evaluation function
-    eval_loss, eval_acc = test_fn(
+    eval_loss, eval_acc, eval_f1 = test_fn(
         model,
         valloader,
         device,
@@ -84,6 +84,7 @@ def evaluate(msg: Message, context: Context):
     metrics = {
         "eval_loss": eval_loss,
         "eval_acc": eval_acc,
+        "eval_f1": eval_f1,
         "num-examples": len(valloader.dataset),
     }
     metric_record = MetricRecord(metrics)

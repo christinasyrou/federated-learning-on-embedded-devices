@@ -263,17 +263,49 @@ def train(net, trainloader, epochs, learning_rate, device, architecture: str):
     return running_loss / len(trainloader)
 
 
+def macro_f1_score(preds: torch.Tensor, labels: torch.Tensor, num_classes: int = 10) -> float:
+    """Unweighted mean of per-class F1 (macro-F1); zero division → F1=0 for that class."""
+    f1s: list[float] = []
+    for class_id in range(num_classes):
+        predicted = preds == class_id
+        actual = labels == class_id
+        tp = (predicted & actual).sum().item()
+        fp = (predicted & ~actual).sum().item()
+        fn = (~predicted & actual).sum().item()
+        if tp + fp + fn == 0:
+            f1s.append(0.0)
+            continue
+        precision = tp / (tp + fp) if tp + fp > 0 else 0.0
+        recall = tp / (tp + fn) if tp + fn > 0 else 0.0
+        if precision + recall == 0:
+            f1s.append(0.0)
+        else:
+            f1s.append(2 * precision * recall / (precision + recall))
+    return sum(f1s) / num_classes
+
+
 def test(net, testloader, device):
     """Validate the model on the test set."""
     net.to(device)
     net.eval()
     criterion = torch.nn.CrossEntropyLoss()
     correct, loss = 0, 0.0
+    all_preds: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
     with torch.no_grad():
         for batch in testloader:
             images = batch["img"].to(device)
             labels = batch["label"].to(device)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
-            correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-    return loss / len(testloader), correct / len(testloader.dataset)
+            preds = torch.max(outputs.data, 1)[1]
+            correct += (preds == labels).sum().item()
+            all_preds.append(preds.cpu())
+            all_labels.append(labels.cpu())
+    preds_cat = torch.cat(all_preds)
+    labels_cat = torch.cat(all_labels)
+    return (
+        loss / len(testloader),
+        correct / len(testloader.dataset),
+        macro_f1_score(preds_cat, labels_cat),
+    )
