@@ -4,35 +4,42 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from fedavg.task import Net, load_data_from_disk
+from fedavg.task import ResNet, load_data_from_disk
 from fedavg.task import test as test_fn
 from fedavg.task import train as train_fn
 
 app = ClientApp()
+
+# Cache dataloaders across rounds (dataset on disk does not change during a run).
+_LOADER_CACHE: dict[tuple[str, int, int], tuple] = {}
+
+
+def _get_loaders(dataset_path: str, batch_size: int, max_train_samples: int):
+    key = (dataset_path, batch_size, max_train_samples)
+    if key not in _LOADER_CACHE:
+        _LOADER_CACHE[key] = load_data_from_disk(
+            dataset_path, batch_size, max_train_samples
+        )
+    return _LOADER_CACHE[key]
 
 
 @app.train()
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 
-    # Read from run config
     local_epochs = context.run_config["local-epochs"]
     learning_rate = context.run_config["learning-rate"]
+    batch_size = context.run_config["batch-size"]
+    max_train_samples = int(context.run_config.get("max-train-samples", 0))
 
-    # Load the model and initialize it with the received weights
-    model = Net()
+    model = ResNet()
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Load the data
-    # Read the node_config to know where dataset is located
     dataset_path = context.node_config["dataset-path"]
-    # Read run_config to fetch hyperparameters relevant to this run
-    batch_size = context.run_config["batch-size"]
-    trainloader, _ = load_data_from_disk(dataset_path, batch_size)
+    trainloader, _ = _get_loaders(dataset_path, batch_size, max_train_samples)
 
-    # Call the training function
     train_loss = train_fn(
         model,
         trainloader,
@@ -41,7 +48,6 @@ def train(msg: Message, context: Context):
         device,
     )
 
-    # Construct and return reply Message
     model_record = ArrayRecord(model.state_dict())
     metrics = {
         "train_loss": train_loss,
@@ -56,27 +62,23 @@ def train(msg: Message, context: Context):
 def evaluate(msg: Message, context: Context):
     """Evaluate the model on local data."""
 
-    # Load the model and initialize it with the received weights
-    model = Net()
+    batch_size = context.run_config["batch-size"]
+    max_train_samples = int(context.run_config.get("max-train-samples", 0))
+
+    model = ResNet()
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Load the data
-    # Read the node_config to know where dataset is located
     dataset_path = context.node_config["dataset-path"]
-    # Read run_config to fetch hyperparameters relevant to this run
-    batch_size = context.run_config["batch-size"]
-    _, valloader = load_data_from_disk(dataset_path, batch_size)
+    _, valloader = _get_loaders(dataset_path, batch_size, max_train_samples)
 
-    # Call the evaluation function
     eval_loss, eval_acc = test_fn(
         model,
         valloader,
         device,
     )
 
-    # Construct and return reply Message
     metrics = {
         "eval_loss": eval_loss,
         "eval_acc": eval_acc,

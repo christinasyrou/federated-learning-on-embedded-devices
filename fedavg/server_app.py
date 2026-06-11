@@ -6,7 +6,7 @@ from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
 from fedavg.run_artifacts import save_run_artifacts
-from fedavg.task import Net
+from fedavg.task import ResNet
 
 # Create ServerApp
 app = ServerApp()
@@ -21,7 +21,7 @@ def main(grid: Grid, context: Context) -> None:
     num_rounds: int = context.run_config["num-server-rounds"]
 
     # Load global model
-    global_model = Net()
+    global_model = ResNet()
     arrays = ArrayRecord(global_model.state_dict())
 
     # Initialize FedAvg strategy

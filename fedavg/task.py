@@ -1,5 +1,7 @@
 """fedavg: Model, local data loading, and train/test for the Flower client."""
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,29 +9,59 @@ from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, Normalize, ToTensor
 
+# Keep CPU usage predictable on Raspberry Pi (avoids thread oversubscription).
+torch.set_num_threads(1)
 
-class Net(nn.Module):
-    """Model (simple CNN adapted from 'PyTorch: A 60 Minute Blitz')"""
+log = logging.getLogger(__name__)
+
+class ResNet(nn.Module):
+    """Lightweight residual CNN sized for Raspberry Pi (Fashion-MNIST)."""
 
     def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)
+        super().__init__()
+        self.conv_init = nn.Conv2d(1, 16, kernel_size=3, padding=1)
+        self.bn_init = nn.BatchNorm2d(16)
+
+        self.conv1a = nn.Conv2d(16, 16, kernel_size=3, padding=1)
+        self.bn1a = nn.BatchNorm2d(16)
+        self.conv1b = nn.Conv2d(16, 16, kernel_size=3, padding=1)
+        self.bn1b = nn.BatchNorm2d(16)
+
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+
+        self.conv2a = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        self.bn2a = nn.BatchNorm2d(32)
+        self.conv2b = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn2b = nn.BatchNorm2d(32)
+        self.shortcutx = nn.Conv2d(16, 32, kernel_size=1)
+
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.fc1 = nn.Linear(32, 64)
+        self.dropout = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 4 * 4)
+        x = F.relu(self.bn_init(self.conv_init(x)))
+
+        residual = x
+        x = F.relu(self.bn1a(self.conv1a(x)))
+        x = self.bn1b(self.conv1b(x))
+        x = F.relu(x + residual)
+
+        x = self.pool(x)
+
+        residual = self.shortcutx(x)
+        x = F.relu(self.bn2a(self.conv2a(x)))
+        x = self.bn2b(self.conv2b(x))
+        x = F.relu(x + residual)
+
+        x = self.gap(x).flatten(1)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        x = self.dropout(x)
+        return self.fc2(x)
 
 
-def load_data_from_disk(path: str, batch_size: int):
+def load_data_from_disk(path: str, batch_size: int, max_train_samples: int = 0):
     """Load a dataset in Huggingface format from disk and creates dataloaders."""
     partition_train_test = load_from_disk(path)
     pytorch_transforms = Compose([ToTensor(), Normalize((0.5,), (0.5,))])
@@ -40,20 +72,36 @@ def load_data_from_disk(path: str, batch_size: int):
         return batch
 
     partition_train_test = partition_train_test.with_transform(apply_transforms)
+    train_dataset = partition_train_test["train"]
+    if max_train_samples > 0 and max_train_samples < len(train_dataset):
+        train_dataset = train_dataset.select(range(max_train_samples))
+        log.info("Using %d/%d training samples", max_train_samples, len(partition_train_test["train"]))
+
     trainloader = DataLoader(
-        partition_train_test["train"], batch_size=batch_size, shuffle=True
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
     )
-    testloader = DataLoader(partition_train_test["test"], batch_size=batch_size)
+    testloader = DataLoader(
+        partition_train_test["test"], batch_size=batch_size, num_workers=0
+    )
     return trainloader, testloader
 
 
 def train(net, trainloader, epochs, learning_rate, device):
     """Train the model on the training set."""
-    net.to(device)  # move model to GPU if available
+    net.to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9)
     net.train()
     running_loss = 0.0
+    log.info(
+        "Training on %d samples, %d batches/epoch, %d epoch(s)",
+        len(trainloader.dataset),
+        len(trainloader),
+        epochs,
+    )
     for _ in range(epochs):
         for batch in trainloader:
             images = batch["image"].to(device)
