@@ -12,14 +12,21 @@ from flwr.serverapp.strategy.result import Result
 
 
 def _rounds_with_labels(
-    num_rounds: int, result: Result
-) -> list[dict[str, int | str | dict[str, float | int | list] | None]]:
+    num_rounds: int,
+    result: Result,
+    wait_times: dict[int, float],
+    client_times: dict[int, dict[str, float]],
+) -> list[dict]:
     """One entry per round with ``round`` as ``i/n`` (e.g. ``1/20``) plus metrics."""
-    out: list[dict[str, int | str | dict[str, float | int | list] | None]] = []
+    out: list[dict] = []
     for i in range(1, num_rounds + 1):
         train = result.train_metrics_clientapp.get(i)
         ev_c = result.evaluate_metrics_clientapp.get(i)
         ev_s = result.evaluate_metrics_serverapp.get(i)
+        wait = wait_times.get(i)
+        per_client = client_times.get(i) or {}
+        # The round ends with the slowest client, so that is what the wait covers.
+        slowest = max(per_client.values()) if per_client else None
         out.append(
             {
                 "round": f"{i}/{num_rounds}",
@@ -27,6 +34,15 @@ def _rounds_with_labels(
                 "train_metrics": dict(train) if train is not None else None,
                 "evaluate_metrics_clientapp": dict(ev_c) if ev_c is not None else None,
                 "evaluate_metrics_serverapp": dict(ev_s) if ev_s is not None else None,
+                "server_wait_time": wait,
+                "client_train_times": per_client or None,
+                "slowest_train_time": slowest,
+                # Everything the server waited for that was not client training:
+                # transfer over the link + ClientApp startup. This is the number
+                # that should grow with extra network hops.
+                "overhead_time": (
+                    wait - slowest if wait is not None and slowest is not None else None
+                ),
             }
         )
     return out
@@ -37,6 +53,9 @@ def save_run_artifacts(
     context: Context,
     num_rounds: int,
     *,
+    wait_times: dict[int, float] | None = None,
+    client_times: dict[int, dict[str, float]] | None = None,
+    total_time: float | None = None,
     runs_root: Path | str = "flwr_runs",
     latest_model_path: Path | str = "final_model.pt",
 ) -> Path:
@@ -51,10 +70,41 @@ def save_run_artifacts(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     torch.save(state_dict, run_dir / "final_model.pt")
+    rounds = _rounds_with_labels(
+        num_rounds, result, wait_times or {}, client_times or {}
+    )
+    train_times = [
+        r["train_metrics"]["train_time"]
+        for r in rounds
+        if r["train_metrics"] and "train_time" in r["train_metrics"]
+    ]
+    overheads = [r["overhead_time"] for r in rounds if r["overhead_time"] is not None]
+    per_client: dict[str, list[float]] = {}
+    for rnd in (client_times or {}).values():
+        for node, t in rnd.items():
+            per_client.setdefault(node, []).append(t)
     artifact = {
         "saved_at_utc": stamp,
         "num_rounds": num_rounds,
-        "rounds": _rounds_with_labels(num_rounds, result),
+        "totals": {
+            # Wall clock for the whole federated run (all rounds, train + evaluate).
+            "total_time": total_time,
+            # Time the server spent waiting on clients (compute + network).
+            "total_server_wait_time": sum((wait_times or {}).values()) or None,
+            # Client-side compute only, summed over rounds (average over clients).
+            "total_train_time": sum(train_times) or None,
+            # Transfer + ClientApp startup, i.e. wait minus the slowest client.
+            "total_overhead_time": sum(overheads) or None,
+            "mean_overhead_per_round": (
+                sum(overheads) / len(overheads) if overheads else None
+            ),
+            # Mean training time of each individual client across the run.
+            "mean_train_time_per_client": {
+                node: sum(v) / len(v) for node, v in sorted(per_client.items())
+            }
+            or None,
+        },
+        "rounds": rounds,
     }
     (run_dir / "metrics.json").write_text(json.dumps(artifact, indent=2), encoding="utf-8")
     run_cfg = {k: context.run_config[k] for k in context.run_config}

@@ -1,5 +1,7 @@
 """fedavg: Flower client app (local training aligned with FedAvg rounds)."""
 
+import time
+
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -40,6 +42,7 @@ def train(msg: Message, context: Context):
     dataset_path = context.node_config["dataset-path"]
     trainloader, _ = _get_loaders(dataset_path, batch_size, max_train_samples)
 
+    t0 = time.perf_counter()
     train_loss = train_fn(
         model,
         trainloader,
@@ -47,10 +50,12 @@ def train(msg: Message, context: Context):
         learning_rate,
         device,
     )
+    train_time = time.perf_counter() - t0
 
     model_record = ArrayRecord(model.state_dict())
     metrics = {
         "train_loss": train_loss,
+        "train_time": train_time,
         "num-examples": len(trainloader.dataset),
     }
     metric_record = MetricRecord(metrics)
