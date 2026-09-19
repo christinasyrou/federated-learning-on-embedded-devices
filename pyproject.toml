@@ -32,8 +32,17 @@ clientapp = "fedavg.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 20
-fraction-evaluate = 0.5
+fraction-evaluate = 0.0
 local-epochs = 1
 learning-rate = 0.05
 batch-size = 8
 max-train-samples = 1024
+# Held-out split for centralized evaluation, written by generate_dataset.py.
+# If absent on the server node, server-side evaluation is skipped.
+server-test-path = "datasets/fashionmnist_server_test"
+server-eval-batch-size = 64
+# How often the server scores the global model during the run:
+#   1 = every round, k = every k-th round, 0 = off.
+# Off keeps the run clean: evaluation.py scores the saved model afterwards, with
+# per-class accuracy and a confusion matrix, without adding work to the timed run.
+server-eval-every = 0

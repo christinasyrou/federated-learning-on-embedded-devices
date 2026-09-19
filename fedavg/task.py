@@ -89,6 +89,26 @@ def load_data_from_disk(path: str, batch_size: int, max_train_samples: int = 0):
     return trainloader, testloader
 
 
+def load_server_test_from_disk(path: str, batch_size: int = 64):
+    """Load the server-side held-out test split and return a DataLoader.
+
+    Unlike :func:`load_data_from_disk`, which reads a client partition saved as a
+    DatasetDict with ``train``/``test`` keys, this reads a plain Dataset: the
+    official Fashion-MNIST test split written by ``generate_dataset.py``. Those
+    images are held out of every client partition, so scoring the global model on
+    them measures generalisation to data no client has seen.
+    """
+    dataset = load_from_disk(path)
+    pytorch_transforms = Compose([ToTensor(), Normalize((0.5,), (0.5,))])
+
+    def apply_transforms(batch):
+        batch["image"] = [pytorch_transforms(img) for img in batch["image"]]
+        return batch
+
+    dataset = dataset.with_transform(apply_transforms)
+    return DataLoader(dataset, batch_size=batch_size, num_workers=0)
+
+
 def train(net, trainloader, epochs, learning_rate, device):
     """Train the model on the training set."""
     net.to(device)
