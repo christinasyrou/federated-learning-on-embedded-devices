@@ -170,7 +170,7 @@ if __name__ == "__main__":
         "--num-supernodes",
         type=int,
         nargs="?",
-        default=defaults.get("num-supernodes", 2),
+        default=2,
         help="Number of partitions to create (default: %(default)s)",
     )
 

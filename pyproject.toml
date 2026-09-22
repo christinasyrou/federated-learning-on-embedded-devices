@@ -48,7 +48,6 @@ server-eval-every = 0
 
 # Defaults for generate_dataset.py; command-line flags override them.
 [tool.dataset]
-num-supernodes = 2
 # iid | dirichlet | pathological
 partition = "iid"
 # Dirichlet skew: 0.1 extreme, 0.5 strong, 10 mild, 100+ near-IID.
