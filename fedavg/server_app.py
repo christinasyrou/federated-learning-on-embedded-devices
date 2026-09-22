@@ -12,7 +12,7 @@ from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
 from fedavg.run_artifacts import save_run_artifacts
-from fedavg.task import ResNet, load_server_test_from_disk
+from fedavg.task import build_model, load_server_test_from_disk
 from fedavg.task import test as test_fn
 
 # Client metrics recorded per node, in addition to the aggregated mean.
@@ -92,6 +92,7 @@ def make_evaluate_fn(
     durations: dict[int, float],
     num_rounds: int,
     every: int = 1,
+    model_name: str = "resnet",
 ) -> Callable[[int, ArrayRecord], MetricRecord | None] | None:
     """Build a server-side evaluation function, or ``None`` if unavailable.
 
@@ -131,7 +132,7 @@ def make_evaluate_fn(
 
     testloader = load_server_test_from_disk(test_path, batch_size)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = ResNet().to(device)
+    model = build_model(model_name).to(device)
     schedule = "every round" if every == 1 else f"every {every} rounds"
     log(INFO, "Server-side evaluation enabled (%s): %d images from '%s'",
         schedule, len(testloader.dataset), test_path)
@@ -166,7 +167,8 @@ def main(grid: Grid, context: Context) -> None:
     server_eval_every = int(context.run_config.get("server-eval-every", 1))
 
     # Load global model
-    global_model = ResNet()
+    model_name = str(context.run_config.get("model", "resnet"))
+    global_model = build_model(model_name)
     arrays = ArrayRecord(global_model.state_dict())
 
     # Initialize FedAvg strategy
@@ -180,6 +182,7 @@ def main(grid: Grid, context: Context) -> None:
         server_eval_times,
         num_rounds,
         server_eval_every,
+        model_name,
     )
 
     # Start strategy, running FedAvg for `num_rounds`

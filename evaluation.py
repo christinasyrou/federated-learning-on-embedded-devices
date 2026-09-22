@@ -31,7 +31,7 @@ from datasets import concatenate_datasets, load_from_disk
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, Normalize, ToTensor
 
-from fedavg.task import ResNet
+from fedavg.task import MODELS, build_model
 
 RUNS_ROOT = Path("flwr_runs")
 DATASETS_ROOT = Path("datasets")
@@ -142,12 +142,13 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device):
     return avg_loss, accuracy, confusion
 
 
-def print_report(run_dir: Path, source: str, loss: float, acc: float, confusion: torch.Tensor):
+def print_report(run_dir: Path, model_name: str, source: str, loss: float, acc: float, confusion: torch.Tensor):
     per_class_total = confusion.sum(dim=1)
     per_class_correct = confusion.diag()
 
     print("\n" + "=" * 60)
     print(f"Run:        {run_dir.name}")
+    print(f"Model:      {model_name}")
     print(f"Test data:  {source}")
     print(f"Examples:   {int(per_class_total.sum())}")
     print("=" * 60)
@@ -193,6 +194,17 @@ def main():
         help="Evaluate on concatenated client test splits instead of downloading the official test set.",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        choices=sorted(MODELS),
+        help=(
+            "Architecture to rebuild before loading the weights "
+            "(default: from the run's run_config.json, else resnet). "
+            "Must match the model the run was trained with."
+        ),
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=None,
@@ -203,16 +215,16 @@ def main():
     run_dir = resolve_run(args.run)
     model_path = run_dir / MODEL_FILENAME
 
-    if args.batch_size is not None:
-        batch_size = args.batch_size
-    else:
-        cfg_path = run_dir / "run_config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
-        batch_size = int(cfg.get("batch-size", 32))
+    cfg_path = run_dir / "run_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
+    batch_size = args.batch_size if args.batch_size is not None else int(cfg.get("batch-size", 32))
+    # The saved state dict only fits the architecture it was trained with, so the
+    # run's own config decides unless overridden.
+    model_name = args.model if args.model is not None else str(cfg.get("model", "resnet"))
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    model = ResNet()
+    model = build_model(model_name)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
 
@@ -232,10 +244,11 @@ def main():
     loader = DataLoader(test_set.with_transform(_apply_transforms), batch_size=batch_size)
 
     loss, acc, confusion = evaluate(model, loader, device)
-    print_report(run_dir, source, loss, acc, confusion)
+    print_report(run_dir, model_name, source, loss, acc, confusion)
 
     report = {
         "run": run_dir.name,
+        "model": model_name,
         "model_path": str(model_path.resolve()),
         "test_source": source,
         "num_examples": int(confusion.sum()),

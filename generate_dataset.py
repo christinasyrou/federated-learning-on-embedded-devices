@@ -1,5 +1,7 @@
 import argparse
 import json
+import tomllib
+from pathlib import Path
 
 from flwr_datasets import FederatedDataset
 from flwr_datasets.partitioner import (
@@ -9,8 +11,22 @@ from flwr_datasets.partitioner import (
 )
 
 DATASET_DIRECTORY = "datasets"
+PYPROJECT = Path(__file__).with_name("pyproject.toml")
 SERVER_TEST_DIRECTORY = f"{DATASET_DIRECTORY}/fashionmnist_server_test"
 LABEL_COLUMN = "label"
+
+
+def load_defaults() -> dict:
+    """Read the ``[tool.dataset]`` table from pyproject.toml.
+
+    Keeps the split parameters in the same file as the run hyperparameters, so a
+    set of partitions can be reproduced from the project config alone. Missing
+    file or table simply means the built-in defaults apply.
+    """
+    if not PYPROJECT.is_file():
+        return {}
+    with PYPROJECT.open("rb") as fh:
+        return tomllib.load(fh).get("tool", {}).get("dataset", {})
 
 
 def build_partitioner(
@@ -141,8 +157,12 @@ def save_dataset_to_disk(
 
 if __name__ == "__main__":
     # Initialize argument parser
+    defaults = load_defaults()
     parser = argparse.ArgumentParser(
-        description="Save Fashion-MNIST dataset partitions to disk"
+        description=(
+            "Save Fashion-MNIST dataset partitions to disk. Defaults are read from "
+            "[tool.dataset] in pyproject.toml; any flag below overrides them."
+        )
     )
 
     # Add an optional positional argument for number of partitions
@@ -150,16 +170,16 @@ if __name__ == "__main__":
         "--num-supernodes",
         type=int,
         nargs="?",
-        default=2,
-        help="Number of partitions to create (default: 2)",
+        default=defaults.get("num-supernodes", 2),
+        help="Number of partitions to create (default: %(default)s)",
     )
 
     parser.add_argument(
         "--partition",
         choices=["iid", "dirichlet", "pathological"],
-        default="iid",
+        default=defaults.get("partition", "iid"),
         help=(
-            "How to split the train pool across clients (default: iid). "
+            "How to split the train pool across clients (default: %(default)s). "
             "'dirichlet' skews label proportions continuously via --alpha; "
             "'pathological' gives each client only --classes-per-partition classes."
         ),
@@ -168,9 +188,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--alpha",
         type=float,
-        default=0.5,
+        default=defaults.get("alpha", 0.5),
         help=(
-            "Dirichlet concentration, used with --partition=dirichlet (default: 0.5). "
+            "Dirichlet concentration, used with --partition=dirichlet (default: %(default)s). "
             "Lower is more skewed: 0.1 extreme, 0.5 strong, 10 mild, 100+ near-IID."
         ),
     )
@@ -178,9 +198,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--classes-per-partition",
         type=int,
-        default=2,
+        default=defaults.get("classes-per-partition", 2),
         help=(
-            "Classes per client, used with --partition=pathological (default: 2). "
+            "Classes per client, used with --partition=pathological (default: %(default)s). "
             "Fashion-MNIST has 10 classes."
         ),
     )
@@ -188,18 +208,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--class-assignment-mode",
         choices=["first-deterministic", "deterministic", "random"],
-        default="first-deterministic",
+        default=defaults.get("class-assignment-mode", "first-deterministic"),
         help=(
             "How classes are handed to clients under --partition=pathological "
-            "(default: first-deterministic, which keeps client class sets disjoint). "
+            "(default: %(default)s, which keeps client class sets disjoint). "
             "'random' can give two clients the same classes, which is not non-IID."
         ),
     )
 
     parser.add_argument(
-        "--no-server-test",
-        action="store_true",
-        help="Skip writing the server-side holdout (official Fashion-MNIST test split).",
+        "--server-test",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("server-test", True),
+        help=(
+            "Write the server-side holdout, the official Fashion-MNIST test split "
+            "(default: on). Pass --no-server-test to skip it."
+        ),
     )
 
     # Parse the arguments
@@ -208,7 +232,7 @@ if __name__ == "__main__":
     # Call the function with the provided argument
     save_dataset_to_disk(
         args.num_supernodes,
-        with_server_test=not args.no_server_test,
+        with_server_test=args.server_test,
         scheme=args.partition,
         alpha=args.alpha,
         classes_per_partition=args.classes_per_partition,

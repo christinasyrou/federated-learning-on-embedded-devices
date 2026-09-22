@@ -6,7 +6,7 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from fedavg.task import ResNet, load_data_from_disk
+from fedavg.task import build_model, load_data_from_disk
 from fedavg.task import test as test_fn
 from fedavg.task import train as train_fn
 
@@ -34,7 +34,7 @@ def train(msg: Message, context: Context):
     batch_size = context.run_config["batch-size"]
     max_train_samples = int(context.run_config.get("max-train-samples", 0))
 
-    model = ResNet()
+    model = build_model(str(context.run_config.get("model", "resnet")))
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -70,7 +70,7 @@ def evaluate(msg: Message, context: Context):
     batch_size = context.run_config["batch-size"]
     max_train_samples = int(context.run_config.get("max-train-samples", 0))
 
-    model = ResNet()
+    model = build_model(str(context.run_config.get("model", "resnet")))
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)

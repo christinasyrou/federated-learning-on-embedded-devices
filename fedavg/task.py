@@ -61,6 +61,97 @@ class ResNet(nn.Module):
         return self.fc2(x)
 
 
+class ResAttentionNet(nn.Module):
+    """Residual CNN with multi-head self-attention before classification.
+
+    Wider than :class:`ResNet`, and it keeps the feature map instead of pooling it
+    away, so the first fully-connected layer dominates the parameter count. The
+    result is a model payload two orders of magnitude larger than ``ResNet``'s.
+    That is the point of having it: at ~100 kB per round the network is invisible
+    next to local training, and only a payload this size makes the number of hops
+    measurable.
+
+    ``image_size`` is the input edge length before pooling (28 for Fashion-MNIST,
+    32 for CIFAR-10) and fixes the size of ``fc1``.
+    """
+
+    def __init__(
+        self, in_channels: int = 1, image_size: int = 28, num_classes: int = 10
+    ):
+        super().__init__()
+        self.conv_init = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.bn_init = nn.BatchNorm2d(32)
+
+        self.conv1a = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1a = nn.BatchNorm2d(32)
+        self.conv1b = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        self.bn1b = nn.BatchNorm2d(32)
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.conv2a = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2a = nn.BatchNorm2d(64)
+        self.conv2b = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn2b = nn.BatchNorm2d(64)
+        self.shortcutx = nn.Conv2d(32, 64, kernel_size=1)
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=64, num_heads=4, batch_first=True
+        )
+        self.layer_norm = nn.LayerNorm(64)
+
+        pooled = image_size // 2
+        self.fc1 = nn.Linear(64 * pooled * pooled, 256)
+        self.dropout = nn.Dropout(0.4)
+        self.fc2 = nn.Linear(256, num_classes)
+
+    def forward(self, x):
+        x = F.relu(self.bn_init(self.conv_init(x)))
+
+        residual = x
+        x = F.relu(self.bn1a(self.conv1a(x)))
+        x = self.bn1b(self.conv1b(x))
+        x = F.relu(x + residual)
+
+        x = self.pool(x)
+
+        residual = self.shortcutx(x)
+        x = F.relu(self.bn2a(self.conv2a(x)))
+        x = self.bn2b(self.conv2b(x))
+        x = F.relu(x + residual)
+
+        batch_size, channels, height, width = x.shape
+        # Each spatial position becomes a token, so attention mixes across the map.
+        x = x.flatten(2).transpose(1, 2)
+        attn_output, _ = self.attention(x, x, x)
+        x = self.layer_norm(x + attn_output)
+
+        x = x.transpose(1, 2).reshape(batch_size, channels, height, width)
+        x = x.reshape(batch_size, -1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        return self.fc2(x)
+
+
+# Selected by the `model` key in pyproject.toml. Every node in a run must build
+# the same architecture, so the choice travels in the Flower run config.
+MODELS: dict[str, type[nn.Module]] = {
+    "resnet": ResNet,
+    "resattention": ResAttentionNet,
+}
+
+
+def build_model(name: str = "resnet") -> nn.Module:
+    """Instantiate the model named in the run config."""
+    try:
+        factory = MODELS[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown model '{name}'. Choose one of: {', '.join(sorted(MODELS))}"
+        ) from None
+    return factory()
+
+
 def load_data_from_disk(path: str, batch_size: int, max_train_samples: int = 0):
     """Load a dataset in Huggingface format from disk and creates dataloaders."""
     partition_train_test = load_from_disk(path)

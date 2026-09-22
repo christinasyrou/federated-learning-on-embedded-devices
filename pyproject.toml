@@ -31,18 +31,31 @@ serverapp = "fedavg.server_app:app"
 clientapp = "fedavg.client_app:app"
 
 [tool.flwr.app.config]
+# resnet: 22k params, ~100 kB/round. resattention: 3.3M params, ~13 MB/round.
+model = "resnet"
 num-server-rounds = 20
+# 0.0 = no per-client evaluation.
 fraction-evaluate = 0.0
 local-epochs = 1
 learning-rate = 0.05
 batch-size = 8
 max-train-samples = 1024
-# Held-out split for centralized evaluation, written by generate_dataset.py.
-# If absent on the server node, server-side evaluation is skipped.
+# Written by generate_dataset.py. Skipped if absent on the server node.
 server-test-path = "datasets/fashionmnist_server_test"
 server-eval-batch-size = 64
-# How often the server scores the global model during the run:
-#   1 = every round, k = every k-th round, 0 = off.
-# Off keeps the run clean: evaluation.py scores the saved model afterwards, with
-# per-class accuracy and a confusion matrix, without adding work to the timed run.
+# 0 = off (score afterwards with evaluation.py), 1 = every round, k = every k-th.
 server-eval-every = 0
+
+# Defaults for generate_dataset.py; command-line flags override them.
+[tool.dataset]
+num-supernodes = 2
+# iid | dirichlet | pathological
+partition = "iid"
+# Dirichlet skew: 0.1 extreme, 0.5 strong, 10 mild, 100+ near-IID.
+alpha = 0.5
+# Pathological: num-supernodes * this should be >= 10, or classes are discarded.
+classes-per-partition = 2
+# first-deterministic keeps client class sets disjoint; random does not.
+class-assignment-mode = "first-deterministic"
+# Holdout for the server node only. Never copied to a client.
+server-test = true
